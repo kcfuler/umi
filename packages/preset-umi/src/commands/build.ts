@@ -32,7 +32,9 @@ COMPRESS=none umi build
 umi build --clean
 `,
     fn: async function () {
-      logger.info(chalk.cyan.bold(`Umi v${api.appData.umi.version}`));
+      logger.info(
+        chalk.cyan.bold(`${api.appData.umi.name} v${api.appData.umi.version}`),
+      );
 
       // clear tmp
       rimraf.sync(api.paths.absTmpPath);
@@ -128,6 +130,7 @@ umi build --clean
       if (api.config.vite) {
         stats = await bundlerVite.build(opts);
       } else if (process.env.OKAM) {
+        require('@umijs/bundler-webpack/dist/requireHook');
         const { build } = require(process.env.OKAM);
         stats = await build(opts);
       } else {

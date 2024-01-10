@@ -59,7 +59,9 @@ umi dev
 PORT=8888 umi dev
 `,
     async fn() {
-      logger.info(chalk.cyan.bold(`Umi v${api.appData.umi.version}`));
+      logger.info(
+        chalk.cyan.bold(`${api.appData.umi.name} v${api.appData.umi.version}`),
+      );
       const enableVite = !!api.config.vite;
 
       // clear tmp
@@ -425,6 +427,7 @@ PORT=8888 umi dev
       if (enableVite) {
         await bundlerVite.dev(opts);
       } else if (process.env.OKAM) {
+        require('@umijs/bundler-webpack/dist/requireHook');
         const { dev } = require(process.env.OKAM);
         await dev(opts);
       } else {

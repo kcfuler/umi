@@ -2,7 +2,13 @@ import React, { ReactElement } from 'react';
 import * as ReactDomServer from 'react-dom/server';
 import { matchRoutes } from 'react-router-dom';
 import { Writable } from 'stream';
-import type { IRoutesById } from './types';
+import type {
+  IRoutesById,
+  IServerLoaderArgs,
+  MetadataLoader,
+  ServerLoader,
+  UmiRequest,
+} from './types';
 
 interface RouteLoaders {
   [key: string]: () => Promise<any>;
@@ -10,11 +16,18 @@ interface RouteLoaders {
 
 export type ServerInsertedHTMLHook = (callbacks: () => React.ReactNode) => void;
 
-interface CreateRequestHandlerOptions {
+interface CreateRequestServerlessOptions {
+  /**
+   * folder path for `build-manifest.json`
+   */
+  sourceDir?: string;
+}
+
+interface CreateRequestHandlerOptions extends CreateRequestServerlessOptions {
   routesWithServerLoader: RouteLoaders;
   PluginManager: any;
   manifest:
-    | (() => { assets: Record<string, string> })
+    | ((sourceDir?: string) => { assets: Record<string, string> })
     | { assets: Record<string, string> };
   getPlugins: () => any;
   getValidKeys: () => any;
@@ -23,6 +36,16 @@ interface CreateRequestHandlerOptions {
   createHistory: (opts: any) => any;
   helmetContext?: any;
   ServerInsertedHTMLContext: React.Context<ServerInsertedHTMLHook | null>;
+}
+
+interface IExecLoaderOpts {
+  routeKey: string;
+  routesWithServerLoader: RouteLoaders;
+  serverLoaderArgs?: IServerLoaderArgs;
+}
+
+interface IExecMetaLoaderOpts extends IExecLoaderOpts {
+  serverLoaderData?: any;
 }
 
 const createJSXProvider = (
@@ -46,7 +69,7 @@ const createJSXProvider = (
 };
 
 function createJSXGenerator(opts: CreateRequestHandlerOptions) {
-  return async (url: string) => {
+  return async (url: string, serverLoaderArgs?: IServerLoaderArgs) => {
     const {
       routesWithServerLoader,
       PluginManager,
@@ -54,6 +77,7 @@ function createJSXGenerator(opts: CreateRequestHandlerOptions) {
       getValidKeys,
       getRoutes,
       createHistory,
+      sourceDir,
     } = opts;
 
     // make import { history } from 'umi' work
@@ -80,21 +104,42 @@ function createJSXGenerator(opts: CreateRequestHandlerOptions) {
       return;
     }
 
-    const loaderData: { [key: string]: any } = {};
+    const loaderData: Record<string, any> = {};
+    const metadata: Record<string, any> = {};
     await Promise.all(
       matches
         .filter((id: string) => routes[id].hasServerLoader)
         .map(
           (id: string) =>
             new Promise<void>(async (resolve) => {
-              loaderData[id] = await executeLoader(id, routesWithServerLoader);
+              loaderData[id] = await executeLoader({
+                routeKey: id,
+                routesWithServerLoader,
+                serverLoaderArgs,
+              });
+              // 如果有metadataLoader，执行metadataLoader
+              // metadataLoader在serverLoader返回之后执行这样metadataLoader可以使用serverLoader的返回值
+              // 如果有多层嵌套路由和合并多层返回的metadata但最里层的优先级最高
+              if (routes[id].hasMetadataLoader) {
+                Object.assign(
+                  metadata,
+                  await executeMetadataLoader({
+                    routesWithServerLoader,
+                    routeKey: id,
+                    serverLoaderArgs,
+                    serverLoaderData: loaderData[id],
+                  }),
+                );
+              }
               resolve();
             }),
         ),
     );
 
     const manifest =
-      typeof opts.manifest === 'function' ? opts.manifest() : opts.manifest;
+      typeof opts.manifest === 'function'
+        ? opts.manifest(sourceDir)
+        : opts.manifest;
     const context = {
       routes,
       routeComponents,
@@ -102,6 +147,7 @@ function createJSXGenerator(opts: CreateRequestHandlerOptions) {
       location: url,
       manifest,
       loaderData,
+      metadata,
     };
 
     const element = (await opts.getClientRootComponent(
@@ -199,15 +245,26 @@ export default function createRequestHandler(
   return async function (req: any, res: any, next: any) {
     // 切换路由场景下，会通过此 API 执行 server loader
     if (req.url.startsWith('/__serverLoader') && req.query.route) {
-      const data = await executeLoader(
-        req.query.route,
-        opts.routesWithServerLoader,
-      );
+      // 在浏览器中触发的__serverLoader请求的request应该和SSR时拿到的request一致，都是当前页面的URL
+      // 否则会导致serverLoader中的request.url和SSR时拿到的request.url不一致
+      // 进而导致浏览器中触发的__serverLoader请求传入的参数和SSR时拿到的参数不一致，导致数据不一致
+      const serverLoaderRequest = new Request(req.query.url, {
+        headers: req.headers,
+      });
+      const data = await executeLoader({
+        routeKey: req.query.route,
+        routesWithServerLoader: opts.routesWithServerLoader,
+        serverLoaderArgs: { request: serverLoaderRequest },
+      });
       res.status(200).json(data);
       return;
     }
 
-    const jsx = await jsxGeneratorDeferrer(req.url);
+    const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    const request = new Request(fullUrl, {
+      headers: req.headers,
+    });
+    const jsx = await jsxGeneratorDeferrer(req.url, { request });
 
     if (!jsx) return next();
 
@@ -231,6 +288,47 @@ export default function createRequestHandler(
       onError(x: any) {
         console.error(x);
       },
+    });
+  };
+}
+
+// 新增的给CDN worker用的SSR请求handle
+export function createUmiHandler(opts: CreateRequestHandlerOptions) {
+  return async function (
+    req: UmiRequest,
+    params?: CreateRequestHandlerOptions,
+  ) {
+    const jsxGeneratorDeferrer = createJSXGenerator({
+      ...opts,
+      ...params,
+    });
+    const loaderArgs: IServerLoaderArgs = {
+      request: req,
+    };
+    const jsx = await jsxGeneratorDeferrer(
+      new URL(req.url).pathname,
+      loaderArgs,
+    );
+
+    if (!jsx) {
+      throw new Error('no page resource');
+    }
+
+    return ReactDomServer.renderToNodeStream(jsx.element);
+  };
+}
+
+export function createUmiServerLoader(opts: CreateRequestHandlerOptions) {
+  return async function (req: UmiRequest) {
+    const query = Object.fromEntries(new URL(req.url).searchParams);
+    // 切换路由场景下，会通过此 API 执行 server loader
+    const serverLoaderRequest = new Request(query.url, {
+      headers: req.headers,
+    });
+    return await executeLoader({
+      routeKey: query.route,
+      routesWithServerLoader: opts.routesWithServerLoader,
+      serverLoaderArgs: { request: serverLoaderRequest },
     });
   };
 }
@@ -270,14 +368,29 @@ function createClientRoute(route: any) {
   };
 }
 
-async function executeLoader(
-  routeKey: string,
-  routesWithServerLoader: RouteLoaders,
-) {
+async function executeLoader(params: IExecLoaderOpts) {
+  const { routeKey, routesWithServerLoader, serverLoaderArgs } = params;
   const mod = await routesWithServerLoader[routeKey]();
   if (!mod.serverLoader || typeof mod.serverLoader !== 'function') {
     return;
   }
   // TODO: 处理错误场景
-  return await mod.serverLoader();
+  return (mod.serverLoader satisfies ServerLoader)(serverLoaderArgs);
+}
+
+async function executeMetadataLoader(params: IExecMetaLoaderOpts) {
+  const {
+    routesWithServerLoader,
+    routeKey,
+    serverLoaderArgs,
+    serverLoaderData,
+  } = params;
+  const mod = await routesWithServerLoader[routeKey]();
+  if (!mod.serverLoader || typeof mod.serverLoader !== 'function') {
+    return;
+  }
+  return (mod.metadataLoader satisfies MetadataLoader)(
+    serverLoaderData,
+    serverLoaderArgs,
+  );
 }

@@ -1,3 +1,4 @@
+import type { IMetadata } from '@umijs/server/dist/types';
 import React from 'react';
 import { StaticRouter } from 'react-router-dom/server';
 import { AppContext } from './appContext';
@@ -5,15 +6,18 @@ import { Routes } from './browser';
 import { createClientRoutes } from './routes';
 import { IRouteComponents, IRoutesById } from './types';
 
-// Get the root React component for ReactDOMServer.renderToString
-export async function getClientRootComponent(opts: {
+interface IHtmlProps {
   routes: IRoutesById;
   routeComponents: IRouteComponents;
   pluginManager: any;
   location: string;
   loaderData: { [routeKey: string]: any };
   manifest: any;
-}) {
+  metadata?: IMetadata;
+}
+
+// Get the root React component for ReactDOMServer.renderToString
+export async function getClientRootComponent(opts: IHtmlProps) {
   const basename = '/';
   const components = { ...opts.routeComponents };
   const clientRoutes = createClientRoutes({
@@ -41,34 +45,48 @@ export async function getClientRootComponent(opts: {
       args: {},
     });
   }
-  return (
-    <Html loaderData={opts.loaderData} manifest={opts.manifest}>
-      <AppContext.Provider
-        value={{
-          routes: opts.routes,
-          routeComponents: opts.routeComponents,
-          clientRoutes,
-          pluginManager: opts.pluginManager,
-          basename,
-          clientLoaderData: {},
-          serverLoaderData: opts.loaderData,
-        }}
-      >
-        {rootContainer}
-      </AppContext.Provider>
-    </Html>
+  const app = (
+    <AppContext.Provider
+      value={{
+        routes: opts.routes,
+        routeComponents: opts.routeComponents,
+        clientRoutes,
+        pluginManager: opts.pluginManager,
+        basename,
+        clientLoaderData: {},
+        serverLoaderData: opts.loaderData,
+      }}
+    >
+      {rootContainer}
+    </AppContext.Provider>
   );
+  return <Html {...opts}>{app}</Html>;
 }
 
-function Html({ children, loaderData, manifest }: any) {
+function Html({
+  children,
+  loaderData,
+  manifest,
+  metadata,
+}: React.PropsWithChildren<IHtmlProps>) {
   // TODO: 处理 head 标签，比如 favicon.ico 的一致性
   // TODO: root 支持配置
 
   return (
-    <html lang="en">
+    <html lang={metadata?.lang || 'en'}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {metadata?.title && <title>{metadata.title}</title>}
+        {metadata?.description && (
+          <meta name="description" content={metadata.description} />
+        )}
+        {metadata?.keywords?.length && (
+          <meta name="keywords" content={metadata.keywords.join(',')} />
+        )}
+        {metadata?.metas?.map((em) => (
+          <meta key={em.name} name={em.name} content={em.content} />
+        ))}
         {manifest.assets['umi.css'] && (
           <link rel="stylesheet" href={manifest.assets['umi.css']} />
         )}

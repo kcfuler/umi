@@ -358,7 +358,7 @@ crossorigin: {}
 
 ## cssMinifierOptions
 
-- 类型：`Object`
+- 类型：`object`
 - 默认值：`{}`
 
 `cssMinifier` CSS 压缩工具配置选项。
@@ -380,6 +380,12 @@ crossorigin: {}
 - [esbuild 参考](https://esbuild.github.io/api/#minify)
 - [cssnano 参考](https://cssnano.co/docs/config-file/)
 - [parcelCSS 参考](https://github.com/parcel-bundler/parcel-css/blob/master/node/index.d.ts)
+
+## cssPublicPath
+- 类型：`string`
+- 默认值：`./`
+
+为 CSS 中的图片、文件等外部资源指定自定义公共路径。作用类似于 `publicPath` 默认值是 `./`。
 
 ## cssLoader
 
@@ -898,7 +904,7 @@ import { Icon } from 'umi';
 
 ## lessLoader
 
-- 类型：`Object`
+- 类型：`object`
 - 默认值：`{ modifyVars: userConfig.theme, javascriptEnabled: true }`
 
 设置 less-loader 的 Options。具体参考参考 [less-loader 的 Options](https://github.com/webpack-contrib/less-loader#lessoptions)。
@@ -1058,7 +1064,7 @@ mountElementId: 'container'
 
 ## monorepoRedirect
 
-- 类型：`{ srcDir?: string[], exclude?: RegExp[], peerDeps?: boolean }`
+- 类型：`{ srcDir?: string[], exclude?: RegExp[], peerDeps?: boolean, useRootProject?: boolean }`
 - 默认值：`false`
 
 在 monorepo 中使用 Umi 时，你可能需要引入其他子包的组件、工具方法等，通过开启此选项来重定向这些子包的导入到他们的源码位置（默认为 `src` 文件夹），这也可以解决 `MFSU` 场景改动子包不热更新的问题。
@@ -1097,6 +1103,8 @@ monorepoRedirect: { peerDeps: true }
 ```
 
 经过重定向，依赖全局唯一，便可以在开发时保持和在 npm 上安装包后的体验一致。
+
+useRootProject: 当你的项目不在 monorepo 子文件夹里，而在 monorepo 根的话，你可以开启这个选项，以使 monorepoRedirect 生效。
 
 ## mpa
 
@@ -1340,6 +1348,12 @@ scripts: [
 
 启用 style loader 功能，让 CSS 内联在 JS 中，不输出额外的 CSS 文件。
 
+## stylusLoader
+- 类型：`object`
+- 默认值：`{}`
+
+配置 stylus-loader ，详见 [stylus-loader > options](https://github.com/webpack-contrib/stylus-loader#options)
+
 ## styles
 
 - 类型：`string[]`
@@ -1370,7 +1384,7 @@ styles: [`body { color: red; }`, `https://a.com/b.css`],
 
 ## srcTranspiler
 
-- 类型：`string` 可选的值：`babel`, `swc`, `esbuild`, `none`
+- 类型：`string` 可选的值：`babel`, `swc`, `esbuild`
 - 默认值：`babel`
 
 配置构建时转译 js/ts 的工具。
@@ -1436,7 +1450,7 @@ import SmileUrl, { ReactComponent as SvgSmile } from './smile.svg';
 ```js
 // 兼容 ie11
 targets: {
-  ie: 11;
+  ie: 11,
 }
 ```
 
